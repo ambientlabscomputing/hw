@@ -9,3 +9,8 @@ test:
 ## lint: Run linters and formatters by triggering pre-commit hooks
 lint:
 	pre-commit run --all-files
+
+## install: Install the package
+install:
+	pip install .
+

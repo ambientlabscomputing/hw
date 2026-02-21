@@ -1,10 +1,14 @@
 import click
 
+from hw.circuits import circuits
 from hw.utils.logger import setup_logger
 
 setup_logger()
 
 
-@click.command()
-def main():
-    click.echo("Hello, World!")
+@click.group()
+def main() -> None:
+    """hw – hardware tooling CLI."""
+
+
+main.add_command(circuits)
