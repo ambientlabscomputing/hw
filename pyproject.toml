@@ -9,7 +9,10 @@ description = "A simple CLI tool"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",
+    "httpx>=0.28",
     "loguru>=0.7.3",
+    "pydantic>=2.12",
+    "rich>=13.0",
 ]
 
 [project.scripts]

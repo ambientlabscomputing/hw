@@ -1,8 +1,8 @@
 import csv
 
 import click
-from loguru import logger
 
+from hw import logger
 from hw.circuits.kicad.convert.models import (
     JLCPCB_BOM_HEADERS,
     JLCPCB_CPL_HEADERS,
