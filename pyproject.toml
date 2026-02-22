@@ -18,5 +18,8 @@ hw = "hw.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests", "e2e_tests"]
+
 [tool.isort]
 profile = "black"
