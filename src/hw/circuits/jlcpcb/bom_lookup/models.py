@@ -18,7 +18,18 @@ class JlcpcbSearchResult(BaseModel):
     package: str | None = Field(default=None, description="Component package/footprint")
     stock: int = Field(description="Available stock quantity")
     price: float | None = Field(default=None, description="Unit price")
-    source: Literal["jlcpcb", "lcsc"] = Field(description="Source API")
+    category: str = Field(
+        default="", description="Component category (e.g. 'Resistors / Chip Resistors')"
+    )
+    discontinued: bool = Field(
+        default=False,
+        description=(
+            "True if JLCPCB marks this part as " "discontinued / no longer manufactured"
+        ),
+    )
+    source: Literal["jlcpcb", "lcsc", "ai"] = Field(
+        description="Source API or AI research"
+    )
 
     def __hash__(self) -> int:
         """Hash by LCSC part number for deduplication."""
