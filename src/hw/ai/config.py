@@ -128,6 +128,10 @@ anthropic_api_key = "sk-ant-..."
 [ai.mcp_servers.browser]
 command = "npx"
 args = ["@playwright/mcp@latest", "--headless"]
+
+[search]
+# OEM Secrets API key for part search (can also be set via OEM_SECRETS_API_KEY env var)
+oem_secrets_api_key = "your-key-here"
 """
 
     config_file.write_text(default_content)
