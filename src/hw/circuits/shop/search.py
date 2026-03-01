@@ -64,6 +64,8 @@ class OemSecretsAPIAdapter(PartSearchPort):
 
 def _parse_part(item: dict) -> Part:
     """Map a single OEM Secrets stock entry to the normalized Part model."""
+    from hw.circuits.resolver import infer_package_from_mpn
+
     distributor = item.get("distributor") or {}
     if not isinstance(distributor, dict):
         distributor = {}
@@ -80,8 +82,9 @@ def _parse_part(item: dict) -> Part:
     ]
     unit_price = price_breaks[0].unit_price if price_breaks else None
 
+    mpn = item.get("part_number", "")
     return Part(
-        part_number=item.get("part_number", ""),
+        part_number=mpn,
         source_part_number=item.get("source_part_number"),
         distributor_name=distributor.get("distributor_common_name")
         or distributor.get("distributor_name"),
@@ -92,6 +95,7 @@ def _parse_part(item: dict) -> Part:
         datasheet_url=item.get("datasheet_url"),
         lifecycle=item.get("life_cycle"),
         currency="USD",
-        value=item.get("part_number", ""),
+        value=mpn,
         footprint="",
+        package=infer_package_from_mpn(mpn),
     )

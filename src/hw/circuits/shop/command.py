@@ -6,6 +6,8 @@ import click
 
 from hw import logger
 from hw.circuits.models.bom import BOM, Format
+from hw.circuits.query import eia_from_footprint
+from hw.circuits.resolver import infer_package_from_mpn
 from hw.circuits.shop.models import ShoppingPlan, ShoppingPlanItem
 from hw.circuits.shop.search import OemSecretsAPIAdapter, PartSearchQuery
 from hw.circuits.shop.workflow import generate_plan
@@ -238,15 +240,35 @@ def plan(
     logger.info(f"Plan saved to {output_file}")
 
     # Summary table
+    # "Pkg" column: shows required EIA vs inferred match EIA so mismatches
+    # are visible at a glance.  Format: "req→found" or "✓ req" or "IC/mod"
+    def _pkg_cell(item: ShoppingPlanItem) -> str:
+        req_eia = eia_from_footprint(item.bom_item.footprint)
+        if not item.is_sourced:
+            return "—"
+        best = item.best
+        if best is None:
+            return "—"
+        # infer matched part's EIA from its package field (set during parse)
+        # or fall back to MPN inference
+        matched_eia = best.package or infer_package_from_mpn(best.part_number)
+        if not req_eia:
+            return "IC/mod"  # module / IC — no EIA code expected
+        if not matched_eia:
+            return f"? ({req_eia})"  # required but unknown for this MPN
+        if matched_eia == req_eia:
+            return f"✓ {req_eia}"
+        return f"✗ {req_eia}≠{matched_eia}"  # mismatch — wrong package
+
     columns = [
         TableColumn("References", style="cyan", no_wrap=True),
         TableColumn("Value"),
         TableColumn("Best match", style="bold"),
+        TableColumn("Pkg", justify="center"),
         TableColumn("Distributor", style="yellow"),
         TableColumn("Qty", justify="right"),
         TableColumn("Unit price", justify="right", style="green"),
         TableColumn("Stock", justify="right"),
-        TableColumn("Candidates", justify="right"),
     ]
     sourced_title = (
         f"Shopping Plan — "
@@ -259,17 +281,30 @@ def plan(
         refs = ", ".join(item.bom_item.references[:4])
         if len(item.bom_item.references) > 4:
             refs += f" +{len(item.bom_item.references) - 4}"
+        if best:
+            match_cell = best.part_number
+        elif item.error:
+            match_cell = _truncate(f"FAIL: {item.error}", 32)
+        else:
+            match_cell = "NOT FOUND"
         row = [
             refs,
             _truncate(item.bom_item.value, 30),
-            best.part_number if best else "NOT FOUND",
+            match_cell,
+            _pkg_cell(item),
             best.distributor_name if best else "—",
             str(item.bom_item.quantity),
             _fmt_price(best.unit_price if best else None),
             _fmt_stock(best.quantity_in_stock if best else None),
-            str(len(item.candidates)),
         ]
-        style = None if item.is_sourced else "red"
+        # Colour-code: green=match+pkg ok, yellow=pkg mismatch, red=not found
+        pkg = _pkg_cell(item)
+        if not item.is_sourced:
+            style = "red"
+        elif pkg.startswith("✗"):
+            style = "yellow"
+        else:
+            style = None
         table.add_row(row, style=style)
 
     table.render()

@@ -205,9 +205,10 @@ class TestSearchItem:
         adapter.add_error("LM358DR")  # First search fails
         adapter.add_result("LM358", candidates)  # Fallback succeeds
 
-        results = await _search_item(
+        results, err = await _search_item(
             adapter=adapter,
             bom_item_value="LM358",
+            bom_item_footprint="",  # empty → query = value unchanged
             bom_item_part_number="LM358DR",
             max_vendors=3,
             vendors_filter=[],
@@ -218,6 +219,7 @@ class TestSearchItem:
         assert results[0].quantity_in_stock == 100  # Highest stock first
         assert results[1].quantity_in_stock == 50
         assert results[2].quantity_in_stock == 0
+        assert err is None
 
     @pytest.mark.asyncio
     async def test_search_respects_max_vendors(self):
@@ -229,9 +231,10 @@ class TestSearchItem:
         ]
         adapter.add_result("TEST", candidates)
 
-        results = await _search_item(
+        results, _err = await _search_item(
             adapter=adapter,
             bom_item_value="TEST",
+            bom_item_footprint="",
             bom_item_part_number=None,
             max_vendors=3,
             vendors_filter=[],
@@ -250,9 +253,10 @@ class TestSearchItem:
         ]
         adapter.add_result("PART", candidates)
 
-        results = await _search_item(
+        results, _err = await _search_item(
             adapter=adapter,
             bom_item_value="PART",
+            bom_item_footprint="",
             bom_item_part_number=None,
             max_vendors=10,
             vendors_filter=["digikey"],
@@ -270,9 +274,10 @@ class TestSearchItem:
         # Second search (by value) will succeed
         adapter.add_result("LM358", [make_part(part_number="LM358")])
 
-        results = await _search_item(
+        results, err = await _search_item(
             adapter=adapter,
             bom_item_value="LM358",
+            bom_item_footprint="",
             bom_item_part_number="LM358DR",
             max_vendors=10,
             vendors_filter=[],
@@ -280,6 +285,7 @@ class TestSearchItem:
 
         assert len(results) == 1
         assert results[0].part_number == "LM358"
+        assert err is None  # fallback succeeded
 
     @pytest.mark.asyncio
     async def test_search_fallback_returns_empty_on_both_fail(self):
@@ -288,31 +294,51 @@ class TestSearchItem:
         adapter.add_error("LM358DR")
         adapter.add_error("LM358")
 
-        results = await _search_item(
+        results, err = await _search_item(
             adapter=adapter,
             bom_item_value="LM358",
+            bom_item_footprint="",
             bom_item_part_number="LM358DR",
             max_vendors=10,
             vendors_filter=[],
         )
 
         assert results == []
+        assert err is not None  # error reason surfaced
 
     @pytest.mark.asyncio
     async def test_search_without_part_number_uses_value(self):
         """_search_item uses value when part_number is None."""
         adapter = FakeAdapter()
-        adapter.add_result("10kΩ", [make_part(value="10kΩ")])
+        adapter.add_result("10k", [make_part(value="10k")])
 
-        results = await _search_item(
+        results, _err = await _search_item(
             adapter=adapter,
-            bom_item_value="10kΩ",
+            bom_item_value="10k",
+            bom_item_footprint="",  # empty footprint → query = "10k" unchanged
             bom_item_part_number=None,
             max_vendors=10,
             vendors_filter=[],
         )
 
         assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_error_captured_not_swallowed(self):
+        """If both searches fail, error reason is returned in tuple."""
+        adapter = FakeAdapter()
+        adapter.add_error("BROKEN")
+
+        results, err = await _search_item(
+            adapter=adapter,
+            bom_item_value="BROKEN",
+            bom_item_footprint="",
+            bom_item_part_number=None,
+            max_vendors=3,
+            vendors_filter=[],
+        )
+        assert results == []
+        assert err is not None and len(err) > 0
 
 
 class TestGeneratePlan:
@@ -323,7 +349,9 @@ class TestGeneratePlan:
         """generate_plan returns ShoppingPlan with candidates."""
         bom = BOM(
             items=[
-                make_bom_item(references=["R1", "R2"], value="10k", footprint="R_0603"),
+                # Use footprints without EIA codes so build_search_query
+                # returns the raw value → FakeAdapter registrations match.
+                make_bom_item(references=["R1", "R2"], value="10k", footprint="Custom"),
                 make_bom_item(references=["U1"], value="STM32", footprint="BGA"),
             ],
             format="kicad",
@@ -346,7 +374,7 @@ class TestGeneratePlan:
         """generate_plan sets references/value/footprint on candidates."""
         bom = BOM(
             items=[
-                make_bom_item(references=["R1", "R2"], value="10k", footprint="R_0603")
+                make_bom_item(references=["R1", "R2"], value="10k", footprint="Custom")
             ],
             format="kicad",
         )
@@ -361,12 +389,14 @@ class TestGeneratePlan:
         candidate = plan.items[0].best
         assert candidate.references == ["R1", "R2"]
         assert candidate.value == "10k"
-        assert candidate.footprint == "R_0603"
+        assert candidate.footprint == "Custom"
 
     @pytest.mark.asyncio
     async def test_generate_plan_respects_vendor_filter(self):
         """generate_plan applies vendor filter."""
-        bom = BOM(items=[make_bom_item(value="TEST")], format="kicad")
+        bom = BOM(
+            items=[make_bom_item(value="TEST", footprint="Custom")], format="kicad"
+        )
 
         adapter = FakeAdapter()
         candidates = [
@@ -386,9 +416,9 @@ class TestGeneratePlan:
         """generate_plan calls progress callback."""
         bom = BOM(
             items=[
-                make_bom_item(value="A"),
-                make_bom_item(value="B"),
-                make_bom_item(value="C"),
+                make_bom_item(value="A", footprint="Custom"),
+                make_bom_item(value="B", footprint="Custom"),
+                make_bom_item(value="C", footprint="Custom"),
             ],
             format="kicad",
         )
@@ -414,8 +444,8 @@ class TestGeneratePlan:
         """generate_plan handles items with no matches."""
         bom = BOM(
             items=[
-                make_bom_item(value="FOUND"),
-                make_bom_item(value="NOTFOUND"),
+                make_bom_item(value="FOUND", footprint="Custom"),
+                make_bom_item(value="NOTFOUND", footprint="Custom"),
             ],
             format="kicad",
         )

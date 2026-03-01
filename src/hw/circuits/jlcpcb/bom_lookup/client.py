@@ -14,12 +14,17 @@ process and closed automatically on exit.
 from __future__ import annotations
 
 import atexit
-import re
 import urllib.parse
 from typing import TYPE_CHECKING
 
 from hw import logger
 from hw.circuits.jlcpcb.bom_lookup.models import JlcpcbSearchResult
+from hw.circuits.query import _is_ferrite_bead  # noqa: F401
+from hw.circuits.query import _sanitize_query  # noqa: F401
+from hw.circuits.query import (  # noqa: F401  (kept for backward-compat imports)
+    _build_connector_query,
+)
+from hw.circuits.query import build_search_query as _build_search_query
 
 if TYPE_CHECKING:
     from playwright.sync_api import Browser, Page
@@ -220,138 +225,10 @@ def search_jlcpcb(query: str) -> list[JlcpcbSearchResult]:
 
 
 # ---------------------------------------------------------------------------
-# Query building helpers
+# Query building helpers — implemented in hw.circuits.query, imported here.
+# The private aliases (_build_search_query, _eia_from_footprint, etc.) are
+# kept so that search_part() below and existing test imports continue to work.
 # ---------------------------------------------------------------------------
-
-
-def _sanitize_query(comment: str) -> str:
-    """Clean up a BOM comment to produce a better search query.
-
-    KiCad BOM comments often contain notation like ``120R@100MHz`` or
-    ``10uF/10V`` that confuse JLCPCB's search.  We replace separators
-    with spaces so the search engine can match individual terms.
-    """
-    q = comment.strip()
-    q = re.sub(r"[@/\\]", " ", q)
-    q = re.sub(r"\s+", " ", q).strip()
-    return q
-
-
-def _is_ferrite_bead(comment: str, footprint: str) -> bool:
-    """Return True when this BOM row describes a ferrite bead.
-
-    Ferrite beads use inductor footprints (``L_…``) and their comment
-    follows the ``<impedance>@<frequency>`` pattern (e.g. ``120R@100MHz``).
-    """
-    return footprint.startswith("L_") and "@" in comment
-
-
-def _build_connector_query(comment: str, footprint: str) -> str:
-    """Build a targeted search query for connector footprints.
-
-    JLCPCB connector part numbers are model-specific (e.g. ``SM08B-GHS-TB``).
-    The KiCad footprint string usually encodes the exact model; we extract it
-    so the search returns the right connector family instead of generic headers.
-
-    Falls back to the sanitised comment if no pattern matches.
-    """
-    # JST any family: JST_GH_SM08B-GHS-TB_1x08-… → "SM08B-GHS-TB"
-    #                  JST_PH_S2B-PH-SM4-TB_1x02-… → "S2B-PH-SM4-TB"
-    m = re.match(r"JST_[A-Z]+_([\w-]+?)_\d+x\d+", footprint)
-    if m:
-        return m.group(1)
-
-    # USB-C: USB_C_Receptacle_HRO_TYPE-C-31-M-12 → "TYPE-C-31-M-12"
-    m = re.match(r"USB_C_Receptacle_\w+_([\w-]+)", footprint)
-    if m:
-        return m.group(1)
-
-    # Generic USB: USB_A_Receptacle_Amphenol_10118194 → "10118194"
-    m = re.match(r"USB_[A-Z]+_\w+_\w+_([\w-]+)", footprint)
-    if m:
-        return m.group(1)
-
-    # Pin header: PinHeader_1x04_P2.54mm_Vertical   → "2.54mm 4 pin header vertical"
-    #              PinHeader_1x05_P2.54mm_Horizontal → "2.54mm 5 pin header horizontal"
-    m = re.match(
-        r"PinHeader_(\d+)x(\d+)_P([\d.]+mm)(?:_(Vertical|Horizontal))?", footprint
-    )
-    if m:
-        rows, cols, pitch, orient = m.groups()
-        pins = int(rows) * int(cols)
-        orient_word = f" {orient.lower()}" if orient else ""
-        return f"{pitch} {pins} pin header{orient_word}"
-
-    # Fallback
-    return _sanitize_query(comment)
-
-
-# Standard EIA package codes — mirrors the set in resolver.py.
-_EIA_CODES_CLIENT = {
-    "0201",
-    "0402",
-    "0603",
-    "0805",
-    "1206",
-    "1210",
-    "1812",
-    "2010",
-    "2512",
-    "1008",
-    "1806",
-    "2816",
-    "0504",
-}
-
-
-def _eia_from_footprint(footprint: str) -> str | None:
-    """Return the EIA package code embedded in a KiCad footprint, or None."""
-    for code in re.findall(r"\d{4}", footprint):
-        if code in _EIA_CODES_CLIENT:
-            return code
-    return None
-
-
-def _build_search_query(comment: str, footprint: str) -> str:
-    """Choose the best search query for a BOM row.
-
-    Routing:
-    * Ferrite beads → comment value + "ferrite bead" keyword
-    * Connectors (footprint starts with known prefixes) → model from footprint
-    * EIA passives → sanitised comment + EIA code (e.g. ``"47uF 1206"``),
-      which steers JLCPCB away from wrong-family matches such as tantalum
-      CASE-D caps for a 1206 pad, or DO-27 diodes for a resistor value of 27.
-    * Everything else → sanitised comment
-    """
-    _CONNECTOR_PREFIXES = ("JST_", "USB_", "PinHeader_", "Conn_", "Molex_")
-
-    if _is_ferrite_bead(comment, footprint):
-        # "120R@100MHz" → "120R 100MHz ferrite bead"
-        return f"{_sanitize_query(comment)} ferrite bead"
-
-    if any(footprint.startswith(p) for p in _CONNECTOR_PREFIXES):
-        return _build_connector_query(comment, footprint)
-
-    # Fuses: "1.5A" + Fuse_1206 → "1.5A fuse 1206" (avoids ferrite bead matches)
-    if footprint.startswith("Fuse_"):
-        base = _sanitize_query(comment)
-        eia = _eia_from_footprint(footprint)
-        suffix = f" {eia}" if eia and eia not in base else ""
-        return f"{base} fuse{suffix}"
-
-    base = _sanitize_query(comment)
-
-    # Resistors: if the comment is a bare number (e.g. "27") with no unit
-    # suffix, JLCPCB's full-text search returns kΩ/MΩ parts that happen to
-    # share those digits.  Appending "ohm" locks the search to the right
-    # resistance family (27Ω, not 82kΩ).
-    if footprint.startswith("R_") and re.match(r"^\d+\.?\d*$", base):
-        base = f"{base}ohm"
-
-    eia = _eia_from_footprint(footprint)
-    if eia and eia not in base:
-        return f"{base} {eia}"
-    return base
 
 
 # ---------------------------------------------------------------------------

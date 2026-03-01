@@ -34,13 +34,14 @@ def make_part(
         buy_now_url=kwargs.get("buy_now_url"),
         datasheet_url=kwargs.get("datasheet_url"),
         lifecycle=kwargs.get("lifecycle"),
+        package=kwargs.get("package"),
     )
 
 
 def make_bom_item(
     references: list[str] | None = None,
     value: str = "10kΩ",
-    footprint: str = "R_0603",
+    footprint: str = "",
     part_number: str | None = None,
     **kwargs,
 ) -> BOMItem:
@@ -65,6 +66,7 @@ def make_shopping_plan_item(
     return ShoppingPlanItem(
         bom_item=bom_item,
         candidates=candidates or [],
+        error=kwargs.get("error"),
     )
 
 

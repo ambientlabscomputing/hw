@@ -16,6 +16,13 @@ class ShoppingPlanItem(BaseModel):
         default_factory=list,
         description="Vendor options ranked best-first (most stock, lowest price).",
     )
+    error: str | None = Field(
+        None,
+        description=(
+            "Human-readable reason why no candidates were found, or None when "
+            "at least one candidate was matched."
+        ),
+    )
 
     @property
     def best(self) -> Part | None:

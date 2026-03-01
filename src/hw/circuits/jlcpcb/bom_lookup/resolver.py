@@ -5,48 +5,11 @@ import re
 
 from hw import logger
 from hw.circuits.jlcpcb.bom_lookup.models import MIN_STOCK, JlcpcbSearchResult
+from hw.circuits.query import eia_from_footprint
+from hw.circuits.resolver import package_matches_eia as _package_contains_eia
 
-# Standard EIA/IPC SMD package codes that appear in KiCad footprint names.
-# When a BOM footprint contains one of these, it is mandatory that the selected
-# part's package also contains the same code.  We cannot substitute a different
-# package size — the pads literally won't line up.
-_EIA_CODES = {
-    "0201",
-    "0402",
-    "0603",
-    "0805",
-    "1206",
-    "1210",
-    "1812",
-    "2010",
-    "2512",
-    "1008",
-    "1806",
-    "2816",
-    "0504",
-}
-
-
-def _extract_eia_code(footprint: str) -> str | None:
-    """Return the EIA package code embedded in a KiCad footprint string, or None.
-
-    Examples:
-        "C_0402_1005Metric"  -> "0402"
-        "R_0805_2012Metric"  -> "0805"
-        "ESP32-S3-WROOM-1"   -> None
-        "PinHeader_1x04_..."  -> None
-    """
-    for code in re.findall(r"\d{4}", footprint):
-        if code in _EIA_CODES:
-            return code
-    return None
-
-
-def _package_contains_eia(package: str | None, eia_code: str) -> bool:
-    """Return True if *package* contains *eia_code* as a standalone token."""
-    if not package:
-        return False
-    return bool(re.search(r"(?<![0-9])" + re.escape(eia_code) + r"(?![0-9])", package))
+# _extract_eia_code is an alias for eia_from_footprint kept for callers below.
+_extract_eia_code = eia_from_footprint
 
 
 def _expected_category_keywords(footprint: str) -> tuple[str, ...]:

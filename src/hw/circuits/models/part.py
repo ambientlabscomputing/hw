@@ -60,6 +60,14 @@ class Part(BaseModel):
     lifecycle: str | None = Field(
         None, description="Life-cycle status (e.g. 'Active', 'NRND', 'Obsolete')."
     )
+    package: str | None = Field(
+        None,
+        description=(
+            "EIA package code or package description inferred from the MPN "
+            "(e.g. '0402', '0603').  Populated by infer_package_from_mpn() "
+            "when the distributor API does not return structured package data."
+        ),
+    )
 
     @property
     def quantity_needed(self) -> int:
