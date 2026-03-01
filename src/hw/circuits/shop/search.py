@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field
@@ -29,7 +30,10 @@ class OemSecretsAPIAdapter(PartSearchPort):
         self._config = config or load_search_config()
 
     async def search(self, query: PartSearchQuery) -> list[Part]:
-        """Search for parts and return normalized Part results."""
+        """Search for parts and return normalized Part results.
+
+        Retries up to 3 times on transient errors with exponential backoff.
+        """
         import httpx
 
         params = {
@@ -37,12 +41,25 @@ class OemSecretsAPIAdapter(PartSearchPort):
             "searchTerm": query.query,
             "currency": "USD",
         }
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(self.BASE_URL, params=params)
-            resp.raise_for_status()
 
-        data = resp.json()
-        return [_parse_part(item) for item in data.get("stock", [])]
+        # Retry logic: up to 3 attempts with exponential backoff (1s, 2s, 4s)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(self.BASE_URL, params=params)
+                    resp.raise_for_status()
+                data = resp.json()
+                return [_parse_part(item) for item in data.get("stock", [])]
+            except (httpx.HTTPError, asyncio.TimeoutError):
+                if attempt == max_retries - 1:
+                    # Last attempt failed, raise the exception
+                    raise
+                # Exponential backoff: 1s, 2s, 4s
+                wait_time = 2**attempt
+                await asyncio.sleep(wait_time)
+
+        raise RuntimeError("Unreachable: retry loop exhausted without raising")
 
 
 def _parse_part(item: dict) -> Part:

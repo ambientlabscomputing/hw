@@ -11,9 +11,8 @@ mouser.com to view and complete their cart. The cart created via API is
 visible in their account once they sign in.
 """
 
-from dataclasses import dataclass
-
 import httpx
+from pydantic import BaseModel, Field
 
 from hw.circuits.models.part import Part
 from hw.circuits.shop.models import ShoppingPlanItem
@@ -31,12 +30,17 @@ def is_mouser(part: Part) -> bool:
     return any(alias in dn for alias in MOUSER_NAMES)
 
 
-@dataclass
-class MouserCartResult:
-    cart_key: str
-    item_count: int
-    merchandise_total: float | None
-    errors: list
+class MouserCartResult(BaseModel):
+    """Result of adding items to a Mouser cart."""
+
+    cart_key: str = Field(..., description="The Mouser cart key UUID.")
+    item_count: int = Field(default=0, description="Total items in the cart.")
+    merchandise_total: float | None = Field(
+        default=None, description="Total merchandise price."
+    )
+    errors: list = Field(
+        default_factory=list, description="Any API errors encountered."
+    )
 
 
 async def add_items_to_cart(

@@ -1,7 +1,11 @@
 """Unit tests for the OEM Secrets search adapter and _parse_part logic."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from hw.circuits.models.part import Part, PriceBreak
-from hw.circuits.shop.search import _parse_part
+from hw.circuits.shop.search import OemSecretsAPIAdapter, PartSearchQuery, _parse_part
 
 # ---------------------------------------------------------------------------
 # Fixtures — raw API response items
@@ -225,3 +229,111 @@ class TestParsePartNoneCurrencyKey:
         part = _parse_part(NONE_CURRENCY_ITEM)
         assert part.distributor_name == "Avnet Silica"
         assert part.quantity_in_stock == 5
+
+
+# ---------------------------------------------------------------------------
+# OemSecretsAPIAdapter — HTTP tests with mocking
+# ---------------------------------------------------------------------------
+
+
+class TestOemSecretsAPIAdapterSearch:
+    """Tests for OemSecretsAPIAdapter.search() with mocked HTTP."""
+
+    @pytest.mark.asyncio
+    async def test_search_returns_parts(self):
+        """Successfully searches and returns parts."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "stock": [FULL_ITEM, NO_PRICE_ITEM],
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            adapter = OemSecretsAPIAdapter()
+            results = await adapter.search(PartSearchQuery(query="LM358"))
+
+            assert len(results) == 2
+            assert results[0].part_number == "LM358DR"
+            assert results[1].part_number == "RK73H2ATTD1002F"
+
+    @pytest.mark.asyncio
+    async def test_search_empty_results(self):
+        """Handles empty search results."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"stock": []}
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            adapter = OemSecretsAPIAdapter()
+            results = await adapter.search(PartSearchQuery(query="NOTFOUND"))
+
+            assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_constructs_correct_url(self):
+        """Verifies correct URL parameters are sent."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"stock": []}
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            adapter = OemSecretsAPIAdapter()
+            await adapter.search(PartSearchQuery(query="TEST-123"))
+
+            # Verify the call was made with correct parameters
+            call_args = mock_client.get.call_args
+            assert call_args[0][0] == "https://oemsecretsapi.com/partsearch"
+            params = call_args[1]["params"]
+            assert params["searchTerm"] == "TEST-123"
+            assert params["currency"] == "USD"
+            assert "apiKey" in params
+
+    @pytest.mark.asyncio
+    async def test_search_propagates_http_errors(self):
+        """HTTP errors are propagated."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.get = AsyncMock(side_effect=RuntimeError("Connection failed"))
+            mock_client_class.return_value = mock_client
+
+            adapter = OemSecretsAPIAdapter()
+
+            with pytest.raises(RuntimeError, match="Connection failed"):
+                await adapter.search(PartSearchQuery(query="TEST"))
+
+    @pytest.mark.asyncio
+    async def test_search_respects_timeout(self):
+        """Adapter has 15s timeout configured."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"stock": []}
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_class.return_value = mock_client
+
+            adapter = OemSecretsAPIAdapter()
+            await adapter.search(PartSearchQuery(query="TEST"))
+
+            # Verify timeout was set to 15
+            call_args = mock_client_class.call_args
+            assert call_args[1]["timeout"] == 15

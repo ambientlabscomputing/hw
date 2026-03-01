@@ -56,6 +56,7 @@ async def generate_plan(
     max_vendors: int = 3,
     vendors_filter: list[str] | None = None,
     on_progress: object = None,
+    max_concurrent: int = 5,
 ) -> ShoppingPlan:
     """Generate a shopping plan from a BOM by searching all items in parallel.
 
@@ -67,6 +68,7 @@ async def generate_plan(
             case-insensitive match). Empty/None means all distributors.
         on_progress: Optional callable invoked after each item completes;
             receives ``(index: int, total: int)`` for progress reporting.
+        max_concurrent: Maximum number of concurrent search requests (default: 5).
 
     Returns:
         A :class:`ShoppingPlan` with candidates ranked best-first.
@@ -75,14 +77,18 @@ async def generate_plan(
         adapter = OemSecretsAPIAdapter()
     _vendors = vendors_filter or []
 
+    # Rate limiting semaphore to prevent overwhelming the API
+    semaphore = asyncio.Semaphore(max_concurrent)
+
     async def _process(idx: int, bom_item) -> ShoppingPlanItem:
-        candidates = await _search_item(
-            adapter=adapter,
-            bom_item_value=bom_item.value,
-            bom_item_part_number=bom_item.part_number,
-            max_vendors=max_vendors,
-            vendors_filter=_vendors,
-        )
+        async with semaphore:
+            candidates = await _search_item(
+                adapter=adapter,
+                bom_item_value=bom_item.value,
+                bom_item_part_number=bom_item.part_number,
+                max_vendors=max_vendors,
+                vendors_filter=_vendors,
+            )
         # Tag each candidate with the BOM linkage fields
         for candidate in candidates:
             candidate.references = bom_item.references

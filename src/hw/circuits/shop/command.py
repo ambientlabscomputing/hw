@@ -17,6 +17,36 @@ from hw.ui.table import Table, TableColumn
 # ---------------------------------------------------------------------------
 
 
+def _run_async(coro):
+    """Run an async coroutine, handling the case where an event loop is already running.
+
+    This is useful for environments like Jupyter notebooks where an event loop
+    may already be active. It attempts to use asyncio.run() first, and falls back
+    to nest_asyncio if needed.
+    """
+    try:
+        # Try to check if there's a running loop
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, safe to use asyncio.run()
+        return asyncio.run(coro)
+
+    # If we get here, a loop is already running
+    # Try to use nest_asyncio to allow nested event loop
+    try:
+        import nest_asyncio
+
+        nest_asyncio.apply()
+        return asyncio.run(coro)
+    except ImportError:
+        # If nest_asyncio is not available, create a task and run it
+        # This works in some interactive environments
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+
+
 def _fmt_price(price: float | None, currency: str = "USD") -> str:
     if price is None:
         return "—"
@@ -73,7 +103,7 @@ def search(query: str, currency: str) -> None:
     click.echo(f"Searching for '{query}'…")
 
     try:
-        parts = asyncio.run(adapter.search(PartSearchQuery(query=query)))
+        parts = _run_async(adapter.search(PartSearchQuery(query=query)))
     except Exception as e:
         raise click.ClickException(f"Search failed: {e}")
 
@@ -187,7 +217,7 @@ def plan(
         bar.advance()
 
     try:
-        shopping_plan = asyncio.run(
+        shopping_plan = _run_async(
             generate_plan(
                 bom=bom,
                 adapter=adapter,
@@ -350,7 +380,7 @@ def order(plan_file: str, no_browser: bool) -> None:
                 f"\n[Mouser] Adding {len(mouser_items)} item(s) to cart via API…"
             )
             try:
-                result = asyncio.run(
+                result = _run_async(
                     mouser_mod.add_items_to_cart(
                         mouser_items, api_key=cfg.mouser_api_key
                     )
